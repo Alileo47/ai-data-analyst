@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "AI Data Analyst",
+    "slug": "ai-data-analyst",
+    "scheme": "ai-data-analyst",
+    "version": "1.0.0",
+    "orientation": "default",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "android": {
+      "package": "com.example.ai_data_analyst"
+    },
+    "plugins": [
+      "expo-router"
+    ]
+  }
+}
