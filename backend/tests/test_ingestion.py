@@ -1,4 +1,5 @@
 from pathlib import Path
+import sqlite3
 
 import pytest
 from openpyxl import Workbook
@@ -87,3 +88,30 @@ def test_raw_upload_cleanup(tmp_path):
     delete_raw_upload(raw_path)
 
     assert not raw_path.exists()
+
+
+def test_numeric_columns_preserve_sqlite_types(tmp_path):
+    csv_path = tmp_path / "numbers.csv"
+    csv_path.write_text(
+        "name,price,qty\nWidget,9.99,100\nGadget,19.50,50\n",
+        encoding="utf-8",
+    )
+    database_path = tmp_path / "00000000-0000-0000-0000-000000000020.db"
+
+    ingest_file(csv_path, database_path)
+
+    connection = sqlite3.connect(database_path)
+    try:
+        columns = {
+            row[1]: row[2]
+            for row in connection.execute("PRAGMA table_info(data)")
+        }
+        total_price = connection.execute("SELECT SUM(price) FROM data").fetchone()[0]
+        total_qty = connection.execute("SELECT SUM(qty) FROM data").fetchone()[0]
+    finally:
+        connection.close()
+
+    assert columns["price"] == "REAL"
+    assert columns["qty"] == "INTEGER"
+    assert abs(total_price - 29.49) < 0.01
+    assert total_qty == 150

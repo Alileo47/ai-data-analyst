@@ -39,7 +39,7 @@ def search_session(
     query: str,
     column: str | None = None,
 ) -> dict[str, Any]:
-    database_path = verify_active_session(session_id, touch=False)
+    database_path = verify_active_session(session_id, touch=True)
     if not isinstance(query, str) or not query.strip():
         raise BadRequestError("Search query cannot be empty.")
 
@@ -179,7 +179,6 @@ def search_session(
             f"Column '{requested_column}' was not found in the uploaded tables."
         )
 
-    touch_session(database_path)
     return {
         "columns": matching_columns,
         "rows": rows,

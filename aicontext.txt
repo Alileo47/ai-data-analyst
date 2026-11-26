@@ -1,236 +1,158 @@
 AI DATA ANALYST - PROJECT CONTEXT / HANDOFF
-Last updated: 2026-11-23
-Workspace: c:\Users\MBS\Projects\ai-data-analyst
+Last updated: 2026-11-27
+Workspace: C:\Users\MBS\Projects\ai-data-analyst
+Repository: https://github.com/Alileo47/ai-data-analyst.git
+Branch at review: master
 
-1. PROJECT PURPOSE
-The project is an AI-assisted data analytics application using React Native + Expo and FastAPI.
-Users upload CSV, XLSX, or SQL dump files, inspect schemas and preview rows, ask natural-language questions, and receive Gemini-generated SQLite read-only results.
-The project supports Expo web deployment on Vercel and Android APK builds.
+1. PROJECT SUMMARY
+AI-assisted data analysis application with a FastAPI backend and an Expo /
+React Native frontend. Users upload CSV, XLSX, or SQL dump files, inspect
+tables and previews, search imported data, and ask natural-language questions.
+Question answering uses Gemini to generate SQLite queries and explain bounded
+query results. The frontend targets Expo Web and Android.
 
-2. TECH STACK
-- Backend: Python 3.11+, FastAPI, Uvicorn, pandas, openpyxl, SQLite3, google-genai
-- Frontend: React Native, Expo Router, React Native Web, TypeScript
-- Backend hosting: Heroku Basic Dyno
-- Web hosting: Vercel
-- Android: EAS or local Expo APK build
-- Temporary database: /tmp/{session_id}.db
-- Upload limit: 20 MB
-- Session TTL: 30 minutes
+2. ARCHITECTURE AND RESPONSIBILITIES
+- Frontend owns file picking, dataset/session UI state, previews, search UI,
+  chat state, and HTTP calls.
+- API routes validate requests and delegate to services.
+- Ingestion parses supported files and creates a per-session SQLite database.
+- Query service handles bounded read-only SQL execution and dataset search.
+- SQLite safety validates statements and applies read-only connection controls.
+- AI service calls Gemini to generate SQL and explain executed results; it
+  does not open or execute the database itself.
+- Lifecycle service creates UUID sessions, resolves database paths, checks
+  session age, removes raw uploads, and cleans expired databases.
+- GEMINI_API_KEY is a backend-only secret. EXPO_PUBLIC_API_URL configures the
+  frontend API endpoint.
 
-3. STRICT RESPONSIBILITY SEPARATION
-- Frontend: UI, file picking, preview, chat, API calls, and session_id state only.
-- API routes: HTTP validation and service delegation only.
-- Ingestion: CSV/XLSX/SQL parsing and SQLite loading.
-- Query: read-only SQL validation/execution and exact/keyword/related search.
-- AI: Gemini prompts and result explanation only; never executes SQL.
-- Lifecycle: UUID sessions, database paths, raw-file cleanup, and TTL cleanup.
-- GEMINI_API_KEY remains backend-only.
-- EXPO_PUBLIC_API_URL is the frontend public API setting.
+3. BACKEND
+Entry point and routing:
+- backend/main.py builds the FastAPI app, configures CORS and typed error
+  handlers, runs startup and recurring database cleanup, and mounts routes.
+- backend/app/api/routes.py exposes GET /health and POST /upload, /ask, /search.
+- Upload supports .csv, .xlsx, and .sql, streams to a temporary file, enforces
+  the configured upload limit, ingests it, removes the raw upload, and removes
+  any partial database if ingestion fails.
+- Ask validates the UUID session, inspects schema, requests SQL from Gemini,
+  refreshes session activity, runs SQL through the read-only query path, and
+  asks Gemini for an explanation.
+- Search works without Gemini and optionally accepts a column or table.column.
 
-4. BACKEND FILES
-backend/app/core/config.py
-- Loads GEMINI_API_KEY.
-- Sets temp directory, 20 MB upload limit, 30-minute TTL, and CORS settings.
+Configuration and errors:
+- backend/app/core/config.py reads ENVIRONMENT, GEMINI_API_KEY, TEMP_DIR,
+  MAX_UPLOAD_MB, SESSION_TTL_SECONDS, and CORS_ORIGINS.
+- Defaults: /tmp for temporary files, 20 MiB uploads, 30-minute session TTL,
+  and localhost:8081 / 127.0.0.1:8081 CORS origins.
+- MAX_UPLOAD_MB is clamped between 15 and 20 MiB.
+- backend/app/core/errors.py defines domain error types and stable JSON error
+  payloads; unexpected exceptions are logged and returned as generic 500s.
+- backend/app/core/sqlite_safety.py accepts one SELECT or WITH statement,
+  blocks dangerous SQL keywords and multiple statements, opens SQLite in
+  read-only mode, enables query_only, and installs an authorizer.
 
-backend/app/core/errors.py
-- Defines typed domain errors and clean JSON error payloads.
-- Provides FastAPI error handlers.
+Services:
+- backend/app/services/ingestion.py reads CSV with pandas, XLSX with
+  openpyxl/pandas, and bounded SQLite-compatible SQL dumps. It drops fully
+  empty rows/columns, sanitizes identifiers, rejects unusable data, limits
+  tables to 250 columns and 250,000 rows, and returns schema, row counts, and
+  up to 10 preview rows per table. CSV/XLSX integer and floating-point
+  columns retain SQLite INTEGER/REAL types. SQL dumps are limited to 2,000
+  statements and a limited set of table/index/insert/transaction statements.
+- backend/app/services/query.py limits SQL results to 1,000 rows and search
+  results to 500. Search is case-insensitive, parameterized, supports an
+  optional column selector, and ranks exact, prefix, contains, then
+  all-terms matches. Search and ask refresh session activity when work starts.
+- backend/app/services/ai.py uses google-genai with model gemini-2.0-flash.
+  The Gemini client is cached per process. SQL generation uses a JSON response
+  schema and schema-grounded prompts. Explanations use the executed SQL,
+  columns, and at most 200 returned rows.
+- backend/app/services/lifecycle.py creates UUID session identifiers, stores
+  databases below TEMP_DIR, checks TTL, deletes raw uploads, and removes
+  expired *.db files.
 
-backend/app/core/sqlite_safety.py
-- Allows exactly one SELECT or WITH statement.
-- Blocks DROP, DELETE, UPDATE, INSERT, ALTER, ATTACH, PRAGMA, VACUUM, and multi-statement SQL.
-- Opens SQLite read-only and uses query_only plus an authorizer.
+Tests and backend deployment files:
+- backend/tests/test_ingestion.py covers CSV, XLSX, SQL dump imports, invalid
+  data, oversized data frames, raw-upload cleanup, and numeric SQLite types.
+- backend/tests/test_routes.py covers health, uploads and validation, upload
+  size limits, expired sessions, malformed/markdown Gemini SQL responses,
+  and Gemini client caching.
+- backend/tests/test_sql_safety.py covers allowed SELECT/WITH statements and
+  unsafe SQL rejection.
+- backend/requirements.txt lists FastAPI, Uvicorn, pandas, openpyxl,
+  google-genai, and python-multipart.
+- backend/runtime.txt specifies Python 3.11.10.
+- backend/Procfile runs Uvicorn using the platform PORT environment variable.
 
-backend/app/services/lifecycle.py
-- Generates UUID sessions.
-- Resolves /tmp/{session_id}.db paths.
-- Validates sessions and TTL.
-- Deletes raw files and expired databases.
-- Touches database activity on successful use.
+4. FRONTEND
+- frontend/app/_layout.tsx configures Expo Router Stack, dark status-bar
+  content, and a transparent blurred header.
+- frontend/app/index.tsx owns session, table, chat, and search state; composes
+  upload, data preview, and chat; uses API search with a local preview-only
+  fallback when the request fails. Its web scroll content has additional
+  top padding below the transparent header.
+- frontend/src/components/UploadPicker.tsx uses expo-document-picker,
+  accepts CSV/XLSX/SQL, checks a 20 MiB client-side size limit, uploads the
+  selected file, and reports status/errors.
+- frontend/src/components/DataPreview.tsx displays table schemas, row counts,
+  preview/search results, and NULL values; includes search/clear controls and
+  web glass-scrollbar styling.
+- frontend/src/components/ChatPanel.tsx submits natural-language questions,
+  displays messages, SQL, result tables, loading, empty, and error states.
+- frontend/src/components/GeneratingIndicator.tsx provides a native-driven
+  animated loading indicator.
+- frontend/src/components/AnimatedBackground.tsx renders 38 low-contrast
+  particles. Web uses a canvas/requestAnimationFrame; non-web uses animated
+  values and a requestAnimationFrame loop, with 2D collisions and edge
+  bouncing.
+- frontend/src/api/client.ts reads EXPO_PUBLIC_API_URL, uploads multipart
+  files (Blob/File on Web and URI metadata on native), calls /ask and /search,
+  and normalizes API/network errors.
+- frontend/src/types/data.ts contains request, response, table, preview-row,
+  and chat-message contracts.
+- frontend/src/theme/tokens.ts centralizes colors, radii, spacing, shadows,
+  dot motion opacity, acrylic surfaces, and Mica backdrop styles.
 
-backend/app/services/ingestion.py
-- Parses CSV with pandas.
-- Parses XLSX worksheets with pandas/openpyxl.
-- Handles bounded SQLite-compatible SQL dump statements.
-- Rejects empty/corrupt/unsupported/oversized/unusable files.
-- Limits tables to 250 columns and 250,000 rows.
-- Returns table names, columns, types, row counts, and previews.
+5. FRONTEND CONFIGURATION
+- frontend/package.json scripts: start, web, build:web, android, typecheck.
+- Frontend stack: Expo SDK 52, Expo Router 4, React Native 0.76, React Native
+  Web, and TypeScript 5.7.
+- frontend/app.json configures Expo Router, static Metro web output, app
+  metadata, and the Android package identifier.
+- frontend/eas.json defines an internal Android APK preview and Android
+  app-bundle production profile.
+- frontend/vercel.json builds with npm run build:web, serves dist, and rewrites
+  routes to index.html.
+- frontend/tsconfig.json enables strict checking and noUncheckedIndexedAccess.
 
-backend/app/services/query.py
-- execute_session_query validates and executes read-only SQL with 1,000-row output bound.
-- search_session performs exact, prefix, contains, and keyword matching.
-- Search is parameterized and case-insensitive.
-- Supports optional column or table.column.
-- Default searches all text/all columns in all session tables.
-- Returns columns, rows, is_empty, and truncated.
-- Does not call ai.py.
-
-backend/app/services/ai.py
-- Uses google-genai and GEMINI_API_KEY from config.
-- generate_sql receives table schemas and the question only.
-- Uses structured JSON response schema {"sql": "..."}.
-- Rejects markdown fences, malformed JSON, invalid output, and empty SQL.
-- explain_results receives question, executed SQL, column names, and bounded actual rows only.
-- Produces concise grounded plain-English explanations.
-- Never opens SQLite or executes SQL.
-
-backend/app/api/routes.py
-- GET /health.
-- POST /upload.
-- POST /ask.
-- POST /search.
-- /upload enforces extension and 20 MB limits, creates a session, ingests data, deletes the raw file in finally, and returns session_id/schema/preview.
-- /ask retains schema-grounded Gemini SQL and read-only execution behavior.
-- /search has no AI dependency.
-
-backend/main.py
-- Creates FastAPI app.
-- Configures CORS from config.
-- Registers typed error handlers.
-- Runs startup and periodic TTL cleanup.
-- Includes routes.
-
-backend/requirements.txt
-- fastapi, uvicorn, pandas, openpyxl, google-genai, python-multipart.
-
-backend/runtime.txt
-- python-3.11.10.
-
-backend/Procfile
-- uvicorn main:app --host 0.0.0.0 --port $PORT.
-
-backend/tests/test_sql_safety.py
-- Tests allowed SELECT/WITH and blocks forbidden SQL, comments, semicolons, and multi-statements.
-
-backend/tests/test_ingestion.py
-- Tests CSV, XLSX, SQL dump, empty/corrupt/unsupported/oversized files, and cleanup.
-
-backend/tests/test_routes.py
-- Tests health, upload, unsupported/empty upload, expired sessions, malformed AI JSON, and markdown AI JSON.
-
-5. FRONTEND FILES
-frontend/app/_layout.tsx
-- Expo Router root Stack layout.
-
-frontend/app/index.tsx
-- Stores session_id, table schemas, messages, and search state.
-- Wires upload, preview, search, and chat.
-- Uses server search first and case-insensitive preview fallback if search fails.
-- Resets chat/search when a new dataset is uploaded.
-
-frontend/src/components/UploadPicker.tsx
-- Uses expo-document-picker.
-- Accepts CSV, XLSX, SQL.
-- Enforces 20 MB UI limit.
-- Shows loading/status/errors.
-
-frontend/src/components/DataPreview.tsx
-- Shows schemas, row counts, preview rows, and missing values as NULL.
-- Provides horizontally scrollable tables.
-- Provides search bar, search/clear controls, loading/error/empty/result states.
-
-frontend/src/components/ChatPanel.tsx
-- Shows user prompts, explanations, generated SQL, result tables, empty states, loading, and errors.
-
-frontend/src/types/data.ts
-- Defines upload, table, preview, ask, search, and chat types.
-
-frontend/src/api/client.ts
-- Uses EXPO_PUBLIC_API_URL only.
-- uploadDataset sends multipart form data.
-- Web converts URI into Blob/File.
-- Native sends Expo URI/name/type object.
-- askQuestion calls /ask.
-- searchDataset calls /search.
-- Handles JSON and network errors.
-
-frontend/app.json
-- Expo metadata, Router plugin, React Native Web static output, Android package.
-
-frontend/package.json
-- Expo dependencies and scripts for start, web, build:web, android, typecheck.
-
-frontend/tsconfig.json
-- Strict mode, noUncheckedIndexedAccess, module esnext, moduleResolution bundler.
-
-frontend/vercel.json
-- Static Expo web build to dist with SPA rewrite.
-
-frontend/eas.json
-- APK preview profile and app-bundle production profile.
-
-6. DEPLOYMENT / RUN CONFIGURATION
-Backend:
-cd backend
-.\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
-
-Backend tests:
-cd backend
-.\.venv\Scripts\python.exe -m pytest -q
+6. LOCAL COMMANDS
+Backend (from repository root):
+  cd backend
+  .\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
+  .\.venv\Scripts\python.exe -m pytest -q
 
 Frontend:
-cd frontend
-npm.cmd run web -- --port 8081
+  cd frontend
+  npm.cmd run web -- --port 8081
+  npm.cmd run typecheck
+  npm.cmd run build:web
 
-Frontend typecheck:
-cd frontend
-npm.cmd run typecheck
+Set EXPO_PUBLIC_API_URL to the reachable backend base URL, for example
+http://127.0.0.1:8000 for local web development. Set GEMINI_API_KEY only in
+the backend environment; do not put secrets in frontend variables or source.
+The root .gitignore excludes .env files, virtual environments, Python caches,
+SQLite files, node_modules, .expo, and dist.
 
-Public frontend URL variable:
-EXPO_PUBLIC_API_URL=http://127.0.0.1:8000
+7. VERIFIED STATE AT THIS UPDATE
+- Backend test suite: 36 passed, with two dependency/pandas deprecation
+  warnings (Starlette TestClient/httpx and pandas replace downcasting).
+- Frontend TypeScript strict typecheck passed.
+- Live localhost health checks and frontend response succeeded; a CSV upload
+  confirmed numeric columns are returned as numeric values with INTEGER/REAL
+  SQLite types.
+- No live Gemini request, Android build, or deployment was performed.
 
-Secret backend variable:
-GEMINI_API_KEY=<not stored in frontend>
-
-7. VERIFIED CURRENT STATE
-- FastAPI health returns {"status":"ok"}.
-- Web app runs at http://localhost:8081.
-- Backend runs at http://127.0.0.1:8000.
-- Backend suite passes 34 tests.
-- Frontend strict typecheck passes.
-- Lowercase searches match uppercase names and emails.
-- Empty search returns is_empty=true.
-- /search works without GEMINI_API_KEY.
-- /upload and /ask remain implemented.
-- Web CSV upload sends a real Blob/File, fixing the "Expected UploadFile, received str" issue.
-- Expo dependency issues, including expo-asset, expo-font, and query-string compatibility, were resolved.
-- TypeScript moduleResolution was moved to bundler and TypeScript 5.7-compatible settings are used.
-
-8. LOCAL ENVIRONMENT NOTES
-- Python 3.11.9 was installed through winget.
-- backend/.venv is a Python 3.11 virtual environment.
-- The system default global Python was 3.15 and was not used for project dependencies.
-- frontend/node_modules contains installed dependencies.
-- npm audit findings exist; npm audit fix --force was not run.
-- Backend and frontend processes may remain active in shell sessions.
-- Gemini /ask requires GEMINI_API_KEY.
-- /search and /upload do not require GEMINI_API_KEY.
-- Existing Expo web warnings may include React useLayoutEffect/SSR and pointerEvents deprecations.
-
-9. CHAT IMPLEMENTATION HISTORY
-- Created plan.md for staged implementation.
-- Implemented backend foundation modules.
-- Implemented lifecycle, ingestion, query, and AI services.
-- Implemented FastAPI routes and entrypoint.
-- Implemented frontend contracts and API client.
-- Implemented Expo UI.
-- Implemented deployment configs and backend tests.
-- Diagnosed missing dependencies due to Python 3.15 instead of Python 3.11.
-- Created backend virtual environment and installed dependencies.
-- Fixed corrupt-file test fixture.
-- Ran project and resolved missing Expo dependencies.
-- Fixed web CSV upload.
-- Added exact/keyword/related case-insensitive record search.
-- Fixed read-only search schema/authorizer issues.
-- Updated TypeScript config.
-- Added this context handoff file.
-
-10. NEXT POSSIBLE WORK
-- Run an end-to-end browser upload/search test.
-- Set GEMINI_API_KEY and test /ask.
-- Add search tests to the backend suite.
-- Add frontend search fallback tests.
-- Build and test Android APK.
-- Deploy backend to Heroku.
-- Deploy frontend to Vercel.
-- Add .env.example and reproducible package metadata.
+8. EDITING NOTES
+- Keep responsibilities separated as described above; do not expose
+  GEMINI_API_KEY in the frontend.
+- Update this handoff when project architecture, commands, environment, or
+  verified test/deployment status materially changes.

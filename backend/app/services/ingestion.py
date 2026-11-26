@@ -129,8 +129,22 @@ def _write_dataframe(
 ) -> str:
     frame = _prepare_column_names(_clean_dataframe(frame))
     table_name = _safe_table_name(table_name, used_names)
+
+    def _sqlite_type(series: pd.Series) -> str:
+        if pd.api.types.is_bool_dtype(series):
+            return "INTEGER"
+        if pd.api.types.is_integer_dtype(series):
+            return "INTEGER"
+        if pd.api.types.is_float_dtype(series):
+            return "REAL"
+        return "TEXT"
+
+    column_types = {
+        str(column): _sqlite_type(frame[column])
+        for column in frame.columns
+    }
     column_definitions = ", ".join(
-        f'"{str(column).replace(chr(34), chr(34) * 2)}" TEXT'
+        f'"{str(column).replace(chr(34), chr(34) * 2)}" {column_types[str(column)]}'
         for column in frame.columns
     )
     connection.execute(f'CREATE TABLE "{table_name}" ({column_definitions})')
@@ -142,7 +156,18 @@ def _write_dataframe(
     placeholders = ", ".join("?" for _ in columns)
     insert_sql = f'INSERT INTO "{table_name}" ({", ".join(columns)}) VALUES ({placeholders})'
     records = [
-        tuple(None if pd.isna(value) else value.item() if hasattr(value, "item") else value for value in row)
+        tuple(
+            None
+            if pd.isna(value)
+            else int(value)
+            if column_types[str(frame.columns[index])] == "INTEGER"
+            else float(value)
+            if column_types[str(frame.columns[index])] == "REAL"
+            else value.item()
+            if hasattr(value, "item")
+            else value
+            for index, value in enumerate(row)
+        )
         for row in frame.itertuples(index=False, name=None)
     ]
     connection.executemany(insert_sql, records)

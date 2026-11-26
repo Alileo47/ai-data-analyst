@@ -1,3 +1,4 @@
+import functools
 import json
 from typing import Any, Mapping, Sequence
 
@@ -21,6 +22,7 @@ SQL_RESPONSE_SCHEMA = {
 }
 
 
+@functools.lru_cache(maxsize=1)
 def _create_client() -> Any:
     if not settings.gemini_api_key:
         raise GeminiError("GEMINI_API_KEY is not configured.")

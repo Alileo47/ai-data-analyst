@@ -80,11 +80,15 @@ async def upload(file: UploadFile = File(...)) -> dict:
             raise BadRequestError("The uploaded file is empty.")
 
         db_path = database_path(session_id)
-        result = ingest_file(
-            raw_path=raw_path,
-            database_path=db_path,
-            session_id=session_id,
-        )
+        try:
+            result = ingest_file(
+                raw_path=raw_path,
+                database_path=db_path,
+                session_id=session_id,
+            )
+        except Exception:
+            db_path.unlink(missing_ok=True)
+            raise
         return {
             "session_id": result["session_id"],
             "tables": result["tables"],
@@ -99,7 +103,7 @@ async def upload(file: UploadFile = File(...)) -> dict:
 @router.post("/ask")
 async def ask(request: AskRequest) -> dict:
     session_id = _valid_uuid(request.session_id)
-    db_path = verify_active_session(session_id, touch=False)
+    db_path = verify_active_session(session_id, touch=True)
     schema = _inspect_database(db_path)
 
     generated_sql = generate_sql(schema["tables"], request.question)

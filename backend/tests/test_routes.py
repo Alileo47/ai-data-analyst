@@ -91,3 +91,25 @@ def test_generate_sql_rejects_markdown(monkeypatch):
 
     with pytest.raises(GeminiError):
         ai.generate_sql([], "Show one row")
+
+
+def test_gemini_client_is_cached(monkeypatch):
+    from google import genai
+    from app.core.config import Settings
+
+    ai._create_client.cache_clear()
+    monkeypatch.setattr(ai, "settings", Settings(gemini_api_key="test-key"))
+    created = []
+
+    class FakeClient:
+        def __init__(self, api_key):
+            created.append(api_key)
+
+    monkeypatch.setattr(genai, "Client", FakeClient)
+
+    first = ai._create_client()
+    second = ai._create_client()
+
+    assert first is second
+    assert created == ["test-key"]
+    ai._create_client.cache_clear()

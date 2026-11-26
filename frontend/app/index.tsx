@@ -120,6 +120,7 @@ export default function IndexScreen() {
         contentContainerStyle={[
           styles.page,
           width >= 900 && styles.widePage,
+          Platform.OS === "web" && { paddingTop: 72 },
         ]}
       >
         <View style={width >= 900 ? styles.wideLayout : styles.layout}>
